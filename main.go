@@ -11,8 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"math/rand"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -456,6 +458,44 @@ func (c *client) handleLine(ctx context.Context, line []byte) error {
 						//c.tscStop(ctx) // Not thread safe.
 						// Note: error can be "Rate Limit Exeded" [sic]
 						return
+					}
+					if false {
+						// Ensure this "device" linked.
+						// tsdevice:/?uuid=xxx&pub_key=yyy
+						devfile := storageDir + "/" + tel + ".device"
+						st, err := os.Stat(devfile)
+						if err != nil && !os.IsNotExist(err) {
+							log.Printf("Unable to stat file %s: %+v", devfile, err)
+							c.sendString("X :Unable to stat device file: " + err.Error())
+						} else if st == nil {
+							log.Printf("Linking new device for %s ...", tel)
+							pubKeyBytes := textsecure.MyIdentityKey()
+							uuidHexDashed, err := textsecure.GetMyUUID()
+							if err != nil {
+								uuidHexDashed = "???"
+								log.Printf("textsecure.GetMyUUID() failed: %v", err)
+							}
+							uuidBytes, _ := hex.DecodeString(strings.ReplaceAll(uuidHexDashed, "-", ""))
+							uuid := base64.RawStdEncoding.EncodeToString(uuidBytes[:])
+							pubKey := base64.RawStdEncoding.EncodeToString(pubKeyBytes[:])
+							deviceURL := "tsdevice:/?" + url.Values{
+								"uuid":    []string{uuid},
+								"pub_key": []string{pubKey}}.Encode()
+							log.Printf("Linking device with URL: %v", deviceURL)
+							code, err := textsecure.NewDeviceVerificationCode()
+							if err != nil {
+								log.Printf("textsecure.NewDeviceVerificationCode() fail: %+v", err)
+								c.sendString("X :Could not register device: " + err.Error())
+							} else {
+								if err := textsecure.AddDevice(uuid, pubKey, code); err != nil {
+									log.Printf("textsecure.AddDevice() fail: %+v", err)
+									c.sendString("X :Could not register device: " + err.Error())
+								} else {
+									log.Printf("Linked new device for %s", tel)
+									ioutil.WriteFile(devfile, []byte(deviceURL+"\r\n"), 0666)
+								}
+							}
+						}
 					}
 					err = textsecure.StartListening()
 					if err != nil {
